@@ -19,6 +19,11 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Setup Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
       - name: Prepare & Build Kotlin Multiplatform iOS Framework
         run: |
           # If user uploaded zapisnyk_kmp_v7.zip directly without unpacking, unpack it automatically
@@ -128,9 +133,7 @@ jobs:
           }
           EOF
 
-            gradle -p kmp_ios_build wrapper --gradle-version 8.9
-            chmod +x kmp_ios_build/gradlew
-            ./kmp_ios_build/gradlew -p kmp_ios_build :composeApp:linkReleaseFrameworkIosArm64
+            gradle -p kmp_ios_build :composeApp:linkReleaseFrameworkIosArm64
 
             mkdir -p iosApp/iosApp/Assets.xcassets/AppIcon.appiconset
             if [ -f "public/zapisnyk_icon_512.png" ]; then
@@ -202,9 +205,27 @@ jobs:
                     - "$(PROJECT_DIR)/../kmp_ios_build/composeApp/build/bin/iosArm64/releaseFramework"
                   OTHER_LDFLAGS:
                     - "$(inherited)"
+                    - "-ObjC"
+                    - "-lc++"
+                    - "-lsqlite3"
                     - "-framework"
                     - "ComposeApp"
-                    - "-lsqlite3"
+                    - "-framework"
+                    - "Metal"
+                    - "-framework"
+                    - "QuartzCore"
+                    - "-framework"
+                    - "CoreText"
+                    - "-framework"
+                    - "CoreGraphics"
+                    - "-framework"
+                    - "IOSurface"
+                    - "-framework"
+                    - "UIKit"
+                    - "-framework"
+                    - "Foundation"
+                    - "-framework"
+                    - "Security"
           EOF
 
             if ! command -v xcodegen &> /dev/null; then
@@ -223,6 +244,7 @@ jobs:
             -scheme iosApp \
             -configuration Release \
             -sdk iphoneos \
+            -arch arm64 \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
