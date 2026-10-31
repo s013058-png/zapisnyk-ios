@@ -24,6 +24,14 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Cache Compiled ComposeApp.framework
+        uses: actions/cache@v4
+        with:
+          path: |
+            kmp_ios_build/composeApp/build/bin/iosArm64/releaseFramework
+            ~/.konan
+          key: kmp-ios-framework-v1-${{ hashFiles('*.zip') }}
+
       - name: Prepare & Build Kotlin Multiplatform iOS Framework
         run: |
           # If user uploaded zapisnyk_kmp_v7.zip directly without unpacking, unpack it automatically
@@ -156,12 +164,16 @@ jobs:
           }
           EOF
 
-            set -o pipefail
-            if ! gradle -p kmp_ios_build :composeApp:linkReleaseFrameworkIosArm64 --build-cache -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g" 2>&1 | tee kmp_build.log; then
-              grep -E "^e: |FAILURE:|What went wrong:|> " kmp_build.log | tail -n 25 | while IFS= read -r line; do
-                echo "::error title=KMP_Build::$line"
-              done
-              exit 1
+            if [ -d "kmp_ios_build/composeApp/build/bin/iosArm64/releaseFramework/ComposeApp.framework" ]; then
+              echo "Using cached ComposeApp.framework!"
+            else
+              set -o pipefail
+              if ! gradle -p kmp_ios_build :composeApp:linkReleaseFrameworkIosArm64 --build-cache -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g" 2>&1 | tee kmp_build.log; then
+                grep -E "^e: |FAILURE:|What went wrong:|> " kmp_build.log | tail -n 25 | while IFS= read -r line; do
+                  echo "::error title=KMP_Build::$line"
+                done
+                exit 1
+              fi
             fi
 
             mkdir -p iosApp/iosApp/Assets.xcassets/AppIcon.appiconset
@@ -209,17 +221,17 @@ jobs:
           import SwiftUI
           import ComposeApp
 
-          struct ComposeView: UIViewControllerRepresentable {
-              func makeUIViewController(context: Context) -> UIViewController {
+          struct ComposeView: SwiftUI.UIViewControllerRepresentable {
+              func makeUIViewController(context: SwiftUI.UIViewControllerRepresentableContext<ComposeView>) -> UIKit.UIViewController {
                   MainViewControllerKt.MainViewController()
               }
-              func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+              func updateUIViewController(_ uiViewController: UIKit.UIViewController, context: SwiftUI.UIViewControllerRepresentableContext<ComposeView>) {}
           }
 
           @main
-          struct iOSApp: App {
-              var body: some Scene {
-                  WindowGroup {
+          struct iOSApp: SwiftUI.App {
+              var body: some SwiftUI.Scene {
+                  SwiftUI.WindowGroup {
                       ComposeView().ignoresSafeArea(.all)
                   }
               }
