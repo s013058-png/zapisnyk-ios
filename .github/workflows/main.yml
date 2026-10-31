@@ -110,6 +110,12 @@ jobs:
           include(":composeApp")
           EOF
 
+            cat << 'EOF' > kmp_ios_build/gradle.properties
+          org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8
+          org.gradle.daemon.performance.disable-logging=true
+          kotlin.apple.xcodeCompatibility.nowarn=true
+          EOF
+
             cat << 'EOF' > kmp_ios_build/build.gradle.kts
           plugins {
               kotlin("multiplatform") version "2.0.21" apply false
@@ -149,7 +155,13 @@ jobs:
           }
           EOF
 
-            gradle -p kmp_ios_build :composeApp:linkReleaseFrameworkIosArm64
+            set -o pipefail
+            if ! gradle -p kmp_ios_build :composeApp:linkReleaseFrameworkIosArm64 -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g" 2>&1 | tee kmp_build.log; then
+              grep -E "^e: |FAILURE:|What went wrong:|> " kmp_build.log | tail -n 25 | while IFS= read -r line; do
+                echo "::error title=KMP_Build::$line"
+              done
+              exit 1
+            fi
 
             mkdir -p iosApp/iosApp/Assets.xcassets/AppIcon.appiconset
             if [ -f "public/zapisnyk_icon_512.png" ]; then
@@ -229,6 +241,7 @@ jobs:
                   PRODUCT_NAME: Zapisnyk
                   MARKETING_VERSION: "1.0.0"
                   CURRENT_PROJECT_VERSION: "1"
+                  ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
                   INFOPLIST_KEY_CFBundleDisplayName: "Записник"
                   INFOPLIST_KEY_UILaunchScreen_Generation: YES
                   INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
@@ -273,7 +286,8 @@ jobs:
       - name: Build Xcode Archive (No Code Signing required)
         working-directory: iosApp
         run: |
-          xcodebuild -project iosApp.xcodeproj \
+          set -o pipefail
+          if ! xcodebuild -project iosApp.xcodeproj \
             -scheme iosApp \
             -configuration Release \
             -sdk iphoneos \
@@ -283,7 +297,12 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
-            build
+            build 2>&1 | tee xcode_build.log; then
+            grep -E "error:|fatal error:|ld: " xcode_build.log | tail -n 25 | while IFS= read -r line; do
+              echo "::error title=Xcode_Build::$line"
+            done
+            exit 1
+          fi
 
       - name: Package .app into Zapisnyk-iOS.ipa
         working-directory: iosApp
