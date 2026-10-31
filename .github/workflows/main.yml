@@ -65,6 +65,22 @@ jobs:
           EOF
             fi
 
+            # Auto-patch PlatformBridge.kt for Kotlin/Native (LinkedHashMap is final in Kotlin/Native)
+            python3 - << 'PYEOF'
+          import os
+          p = "kmp_ios_build/composeApp/src/commonMain/kotlin/com/my/zapisnyk/PlatformBridge.kt"
+          if os.path.exists(p):
+              with open(p, "r", encoding="utf-8") as f:
+                  s = f.read()
+              s = s.replace(
+                  "class ConcurrentHashMap<K, V> : LinkedHashMap<K, V>()",
+                  "class ConcurrentHashMap<K, V>(private val map: MutableMap<K, V> = mutableMapOf()) : MutableMap<K, V> by map"
+              )
+              with open(p, "w", encoding="utf-8") as f:
+                  f.write(s)
+              print("Patched PlatformBridge.kt for Kotlin/Native")
+          PYEOF
+
             # 2. Copy iosMain Kotlin sources
             if [ -d "iosMain/kotlin/com/my/zapisnyk" ]; then
               cp iosMain/kotlin/com/my/zapisnyk/*.kt kmp_ios_build/composeApp/src/iosMain/kotlin/com/my/zapisnyk/
@@ -142,10 +158,26 @@ jobs:
               sips -z 1024 1024 zapisnyk_icon_512.png --out iosApp/iosApp/Assets.xcassets/AppIcon.appiconset/app-icon-1024.png
             elif [ -f "iosApp_icons/app-icon-1024.png" ]; then
               cp iosApp_icons/app-icon-1024.png iosApp/iosApp/Assets.xcassets/AppIcon.appiconset/app-icon-1024.png
+            else
+              python3 - << 'PYICON'
+          import struct, zlib
+          w, h = 1024, 1024
+          raw = b"".join(b"\x00" + b"\x1e\x3a\x8a" * w for _ in range(h))
+          def chunk(tag, data):
+              return struct.pack("!I", len(data)) + tag + data + struct.pack("!I", zlib.crc32(tag + data) & 0xffffffff)
+          png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack("!IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b"")
+          with open("iosApp/iosApp/Assets.xcassets/AppIcon.appiconset/app-icon-1024.png", "wb") as f:
+              f.write(png)
+          PYICON
             fi
 
-            if [ -f "iosApp/iosApp/Assets.xcassets/AppIcon.appiconset/app-icon-1024.png" ]; then
-              cat << 'EOF' > iosApp/iosApp/Assets.xcassets/AppIcon.appiconset/Contents.json
+            cat << 'EOF' > iosApp/iosApp/Assets.xcassets/Contents.json
+          {
+            "info" : { "author" : "xcode", "version" : 1 }
+          }
+          EOF
+
+            cat << 'EOF' > iosApp/iosApp/Assets.xcassets/AppIcon.appiconset/Contents.json
           {
             "images" : [
               {
@@ -158,7 +190,6 @@ jobs:
             "info" : { "author" : "xcode", "version" : 1 }
           }
           EOF
-            fi
 
             cat << 'EOF' > iosApp/iosApp/iOSApp.swift
           import SwiftUI
@@ -196,6 +227,8 @@ jobs:
                 base:
                   PRODUCT_BUNDLE_IDENTIFIER: com.my.zapisnyk
                   PRODUCT_NAME: Zapisnyk
+                  MARKETING_VERSION: "1.0.0"
+                  CURRENT_PROJECT_VERSION: "1"
                   INFOPLIST_KEY_CFBundleDisplayName: "Записник"
                   INFOPLIST_KEY_UILaunchScreen_Generation: YES
                   INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
