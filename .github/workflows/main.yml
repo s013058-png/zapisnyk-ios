@@ -1,0 +1,246 @@
+name: Build iOS IPA (Zapisnyk)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-ios:
+    name: Build Unsigned IPA for iPhone (AltStore / Sideloadly)
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Prepare & Build Kotlin Multiplatform iOS Framework
+        run: |
+          # If user uploaded zapisnyk_kmp_v7.zip directly without unpacking, unpack it automatically
+          for z in *.zip; do
+            if [ -f "$z" ]; then
+              echo "Unpacking uploaded archive: $z"
+              unzip -o "$z"
+            fi
+          done
+
+          if [ ! -d "iosApp" ]; then
+            echo "Auto-scaffolding KMP + iOS Xcode project..."
+            mkdir -p kmp_ios_build/composeApp/src/commonMain/kotlin/com/my/zapisnyk
+            mkdir -p kmp_ios_build/composeApp/src/iosMain/kotlin/com/my/zapisnyk
+
+            # 1. Copy commonMain Kotlin sources from whichever folder layout was uploaded
+            if [ -d "commonMain/kotlin/com/my/zapisnyk" ]; then
+              cp commonMain/kotlin/com/my/zapisnyk/*.kt kmp_ios_build/composeApp/src/commonMain/kotlin/com/my/zapisnyk/
+            elif [ -d "kmp_split" ]; then
+              cp kmp_split/*.kt kmp_ios_build/composeApp/src/commonMain/kotlin/com/my/zapisnyk/
+            else
+              for f in *.kt; do
+                if [ -f "$f" ] && [ "$f" != "Platform.ios.kt" ] && [ "$f" != "Platform.android.kt" ] && [ "$f" != "MainViewController.kt" ]; then
+                  cp "$f" kmp_ios_build/composeApp/src/commonMain/kotlin/com/my/zapisnyk/
+                fi
+              done
+            fi
+
+            # Ensure Platform.kt interface exists in commonMain
+            if [ ! -f "kmp_ios_build/composeApp/src/commonMain/kotlin/com/my/zapisnyk/Platform.kt" ]; then
+              cat << 'EOF' > kmp_ios_build/composeApp/src/commonMain/kotlin/com/my/zapisnyk/Platform.kt
+          package com.my.zapisnyk
+
+          interface Platform {
+              val name: String
+          }
+
+          expect fun getPlatform(): Platform
+          EOF
+            fi
+
+            # 2. Copy iosMain Kotlin sources
+            if [ -d "iosMain/kotlin/com/my/zapisnyk" ]; then
+              cp iosMain/kotlin/com/my/zapisnyk/*.kt kmp_ios_build/composeApp/src/iosMain/kotlin/com/my/zapisnyk/
+            elif [ -f "public/Platform.ios.kt" ]; then
+              cp public/Platform.ios.kt kmp_ios_build/composeApp/src/iosMain/kotlin/com/my/zapisnyk/Platform.ios.kt
+              cp public/MainViewController.kt kmp_ios_build/composeApp/src/iosMain/kotlin/com/my/zapisnyk/MainViewController.kt
+            elif [ -f "Platform.ios.kt" ]; then
+              cp Platform.ios.kt kmp_ios_build/composeApp/src/iosMain/kotlin/com/my/zapisnyk/Platform.ios.kt
+              cp MainViewController.kt kmp_ios_build/composeApp/src/iosMain/kotlin/com/my/zapisnyk/MainViewController.kt
+            fi
+
+            cat << 'EOF' > kmp_ios_build/settings.gradle.kts
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "Zapisnyk"
+          include(":composeApp")
+          EOF
+
+            cat << 'EOF' > kmp_ios_build/build.gradle.kts
+          plugins {
+              kotlin("multiplatform") version "2.0.21" apply false
+              id("org.jetbrains.compose") version "1.7.0" apply false
+              id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
+          }
+          EOF
+
+            cat << 'EOF' > kmp_ios_build/composeApp/build.gradle.kts
+          plugins {
+              kotlin("multiplatform")
+              id("org.jetbrains.compose")
+              id("org.jetbrains.kotlin.plugin.compose")
+          }
+
+          kotlin {
+              listOf(
+                  iosArm64()
+              ).forEach { iosTarget ->
+                  iosTarget.binaries.framework {
+                      baseName = "ComposeApp"
+                      isStatic = true
+                  }
+              }
+
+              sourceSets {
+                  commonMain.dependencies {
+                      implementation(compose.runtime)
+                      implementation(compose.foundation)
+                      implementation(compose.material3)
+                      implementation(compose.materialIconsExtended)
+                      implementation(compose.ui)
+                      implementation(compose.components.resources)
+                      implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
+                  }
+              }
+          }
+          EOF
+
+            gradle -p kmp_ios_build wrapper --gradle-version 8.9
+            chmod +x kmp_ios_build/gradlew
+            ./kmp_ios_build/gradlew -p kmp_ios_build :composeApp:linkReleaseFrameworkIosArm64
+
+            mkdir -p iosApp/iosApp/Assets.xcassets/AppIcon.appiconset
+            if [ -f "public/zapisnyk_icon_512.png" ]; then
+              sips -z 1024 1024 public/zapisnyk_icon_512.png --out iosApp/iosApp/Assets.xcassets/AppIcon.appiconset/app-icon-1024.png
+            elif [ -f "zapisnyk_icon_512.png" ]; then
+              sips -z 1024 1024 zapisnyk_icon_512.png --out iosApp/iosApp/Assets.xcassets/AppIcon.appiconset/app-icon-1024.png
+            elif [ -f "iosApp_icons/app-icon-1024.png" ]; then
+              cp iosApp_icons/app-icon-1024.png iosApp/iosApp/Assets.xcassets/AppIcon.appiconset/app-icon-1024.png
+            fi
+
+            if [ -f "iosApp/iosApp/Assets.xcassets/AppIcon.appiconset/app-icon-1024.png" ]; then
+              cat << 'EOF' > iosApp/iosApp/Assets.xcassets/AppIcon.appiconset/Contents.json
+          {
+            "images" : [
+              {
+                "filename" : "app-icon-1024.png",
+                "idiom" : "universal",
+                "platform" : "ios",
+                "size" : "1024x1024"
+              }
+            ],
+            "info" : { "author" : "xcode", "version" : 1 }
+          }
+          EOF
+            fi
+
+            cat << 'EOF' > iosApp/iosApp/iOSApp.swift
+          import SwiftUI
+          import ComposeApp
+
+          struct ComposeView: UIViewControllerRepresentable {
+              func makeUIViewController(context: Context) -> UIViewController {
+                  MainViewControllerKt.MainViewController()
+              }
+              func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+          }
+
+          @main
+          struct iOSApp: App {
+              var body: some Scene {
+                  WindowGroup {
+                      ComposeView().ignoresSafeArea(.all)
+                  }
+              }
+          }
+          EOF
+
+            cat << 'EOF' > iosApp/project.yml
+          name: iosApp
+          options:
+            bundleIdPrefix: com.my
+          targets:
+            iosApp:
+              type: application
+              platform: iOS
+              deploymentTarget: "15.0"
+              sources:
+                - path: iosApp
+              settings:
+                base:
+                  PRODUCT_BUNDLE_IDENTIFIER: com.my.zapisnyk
+                  PRODUCT_NAME: Zapisnyk
+                  INFOPLIST_KEY_CFBundleDisplayName: "Записник"
+                  INFOPLIST_KEY_UILaunchScreen_Generation: YES
+                  INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
+                  GENERATE_INFOPLIST_FILE: YES
+                  FRAMEWORK_SEARCH_PATHS:
+                    - "$(inherited)"
+                    - "$(PROJECT_DIR)/../kmp_ios_build/composeApp/build/bin/iosArm64/releaseFramework"
+                  OTHER_LDFLAGS:
+                    - "$(inherited)"
+                    - "-framework"
+                    - "ComposeApp"
+                    - "-lsqlite3"
+          EOF
+
+            if ! command -v xcodegen &> /dev/null; then
+              brew install xcodegen
+            fi
+            cd iosApp && xcodegen generate && cd ..
+          else
+            chmod +x ./gradlew || true
+            ./gradlew :composeApp:embedAndSignAppleFrameworkForXcode -Pconfiguration=Release -Ptarget=iosArm64 || ./gradlew :shared:embedAndSignAppleFrameworkForXcode -Pconfiguration=Release -Ptarget=iosArm64 || true
+          fi
+
+      - name: Build Xcode Archive (No Code Signing required)
+        working-directory: iosApp
+        run: |
+          xcodebuild -project iosApp.xcodeproj \
+            -scheme iosApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            build
+
+      - name: Package .app into Zapisnyk-iOS.ipa
+        working-directory: iosApp
+        run: |
+          mkdir -p Payload
+          APP_PATH=$(find build -name "*.app" -type d | head -n 1)
+          echo "Found app at: $APP_PATH"
+          cp -r "$APP_PATH" Payload/
+          zip -r Zapisnyk-iOS.ipa Payload
+
+      - name: Upload Zapisnyk-iOS.ipa Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zapisnyk-iOS-IPA
+          path: iosApp/Zapisnyk-iOS.ipa
