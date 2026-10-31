@@ -112,6 +112,7 @@ jobs:
 
             cat << 'EOF' > kmp_ios_build/gradle.properties
           org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8
+          org.gradle.caching=true
           org.gradle.daemon.performance.disable-logging=true
           kotlin.apple.xcodeCompatibility.nowarn=true
           EOF
@@ -156,7 +157,7 @@ jobs:
           EOF
 
             set -o pipefail
-            if ! gradle -p kmp_ios_build :composeApp:linkReleaseFrameworkIosArm64 -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g" 2>&1 | tee kmp_build.log; then
+            if ! gradle -p kmp_ios_build :composeApp:linkReleaseFrameworkIosArm64 --build-cache -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g" 2>&1 | tee kmp_build.log; then
               grep -E "^e: |FAILURE:|What went wrong:|> " kmp_build.log | tail -n 25 | while IFS= read -r line; do
                 echo "::error title=KMP_Build::$line"
               done
@@ -204,6 +205,7 @@ jobs:
           EOF
 
             cat << 'EOF' > iosApp/iosApp/iOSApp.swift
+          import UIKit
           import SwiftUI
           import ComposeApp
 
@@ -267,6 +269,18 @@ jobs:
                     - "-framework"
                     - "IOSurface"
                     - "-framework"
+                    - "ImageIO"
+                    - "-framework"
+                    - "CoreServices"
+                    - "-framework"
+                    - "Accelerate"
+                    - "-framework"
+                    - "AVFoundation"
+                    - "-framework"
+                    - "AudioToolbox"
+                    - "-framework"
+                    - "CoreMedia"
+                    - "-framework"
                     - "UIKit"
                     - "-framework"
                     - "Foundation"
@@ -298,7 +312,7 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             build 2>&1 | tee xcode_build.log; then
-            grep -E "error:|fatal error:|ld: " xcode_build.log | tail -n 25 | while IFS= read -r line; do
+            grep -E "error:|fatal error:|Undefined symbols|ld: " xcode_build.log | tail -n 25 | while IFS= read -r line; do
               echo "::error title=Xcode_Build::$line"
             done
             exit 1
